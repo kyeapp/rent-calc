@@ -10,10 +10,13 @@ import (
 )
 
 // TODO: change this to ask the user
-var s = "Oct 20, 2018"
-var e = "Nov 19, 2018"
-var billType = "PG&E"
-var billAmount = 72.28
+const (
+	DATE_FORMAT = "Jan _2, 2006"
+	BILL_START  = "Oct 20, 2018"
+	BILL_END    = "Nov 19, 2018"
+	BILL_TYPE   = "PG&E"
+	BILL_TOTAL  = 72.28
+)
 
 type tennant struct {
 	id          int
@@ -67,16 +70,13 @@ func loadTennants() (map[int]tennant, error) {
 			checkErr(err)
 		}
 
-		// parse tennant move in and move out dates
-		dateFormat := "Jan _2, 2006"
-
 		var t_moveInDate time.Time
-		t_moveInDate, err = time.Parse(dateFormat, v[4])
+		t_moveInDate, err = time.Parse(DATE_FORMAT, v[4])
 		checkErr(err)
 
 		var t_moveOutDate time.Time
 		if v[5] != "" {
-			t_moveOutDate, err = time.Parse(dateFormat, v[5])
+			t_moveOutDate, err = time.Parse(DATE_FORMAT, v[5])
 			checkErr(err)
 		}
 
@@ -96,17 +96,19 @@ func loadTennants() (map[int]tennant, error) {
 	return tennantMap, nil
 }
 
-type billableDays struct {
-	startDate time.Time
-	endDate   time.Time
-	total     int
+type bill struct {
+	startDate    time.Time
+	endDate      time.Time
+	tennantDays  int
+	tennantShare float64
+	amountDue    float64
 }
 
 // Returns
-// 1. a map of tennant ID to the number of days they can be billed for
+// 1. a map of tennant ID to their bill (incomplete)
 // 2. a total number of tennant days
-func findBillableTennantDays(tennants map[int]tennant, billPeriodStart time.Time, billPeriodEnd time.Time) (map[int]billableDays, int) {
-	billableDaysMap := make(map[int]billableDays, 0)
+func findBillableTennantDays(tennants map[int]tennant, billPeriodStart time.Time, billPeriodEnd time.Time) (map[int]*bill, int) {
+	billMap := make(map[int]*bill, 0)
 	var totalTennantDays int
 
 	for _, tennant := range tennants {
@@ -128,56 +130,69 @@ func findBillableTennantDays(tennants map[int]tennant, billPeriodStart time.Time
 		}
 
 		// Calculate how many days tennant should be billed for
-		tennantTotal := int(tennantBillEndDate.Sub(tennantBillStartDate).Hours()/24) + 1 // add one because we want inclusive end date
+		tennantDays := int(tennantBillEndDate.Sub(tennantBillStartDate).Hours()/24) + 1 // add one because we want inclusive end date
 
-		billableDaysMap[tennant.id] = billableDays{
-			startDate: tennantBillStartDate,
-			endDate:   tennantBillEndDate,
-			total:     tennantTotal,
+		billMap[tennant.id] = &bill{
+			startDate:   tennantBillStartDate,
+			endDate:     tennantBillEndDate,
+			tennantDays: tennantDays,
 		}
 
-		totalTennantDays += tennantTotal
-
-		fmt.Println("TENANT INFO===================================")
-		fmt.Println(tennant.name, tennantBillStartDate.Format("Jan 2, 2006"), tennantBillEndDate.Format("Jan 2, 2006"), tennantTotal)
-		fmt.Println()
+		totalTennantDays += tennantDays
 	}
 
-	return billableDaysMap, totalTennantDays
+	return billMap, totalTennantDays
+}
+
+// Verify that the calculations still add up
+func verifyBillCalculations(billMap map[int]*bill) {
+	var totalAmountDue float64
+	var totalTennantShares float64
+	for _, bill := range billMap {
+		totalAmountDue += bill.amountDue
+		totalTennantShares += bill.tennantShare
+	}
+
+	if totalAmountDue != BILL_TOTAL {
+		panic("INDIVIDUAL BILLS DID NOT ADD UP TO TOTAL BILL")
+	}
+	if totalTennantShares != float64(1) {
+		panic("TOTAL SHARES DO NOT ADD UP TO 100%")
+	}
 }
 
 func main() {
-	AllTennantsMap, err := loadTennants()
+	tennantsMap, err := loadTennants()
 	checkErr(err)
 
-	// Take input for the billing dates and the amount that is due
-	dateFormat := "Jan _2, 2006"
-
-	billPeriodStart, err := time.Parse(dateFormat, s)
+	billPeriodStart, err := time.Parse(DATE_FORMAT, BILL_START)
 	checkErr(err)
 
-	billPeriodEnd, err := time.Parse(dateFormat, e)
+	billPeriodEnd, err := time.Parse(DATE_FORMAT, BILL_END)
 	checkErr(err)
-
-	fmt.Println(" before billable function ========================")
-	fmt.Println("start period:", billPeriodStart.Format("Jan 2, 2006"))
-	fmt.Println("end period:", billPeriodEnd.Format("Jan 2, 2006"))
 
 	// find what tennats can be billed for that timeframe and for how many days
-	billableDaysMap, totalTennantDays := findBillableTennantDays(AllTennantsMap, billPeriodStart, billPeriodEnd)
+	billMap, totalTennantDays := findBillableTennantDays(tennantsMap, billPeriodStart, billPeriodEnd)
 	checkErr(err)
 
-	fmt.Println("========================")
-	for _, t := range billableDaysMap {
-		fmt.Println(t)
+	//do the calulation
+	for _, bill := range billMap {
+		bill.tennantShare = float64(float64(bill.tennantDays) / float64(totalTennantDays))
+		bill.amountDue = float64(BILL_TOTAL) * bill.tennantShare
 	}
 
-	//do the calulation
+	verifyBillCalculations(billMap)
 
 	//show how much each person owes for that bill.
-
-	fmt.Println(billType)
-	fmt.Println(billAmount)
-	fmt.Println(totalTennantDays)
+	for tennantID, bill := range billMap {
+		fmt.Println("Name:", tennantsMap[tennantID].name)
+		fmt.Println("Bill type:", BILL_TYPE)
+		fmt.Println("Start date (inclusive):", bill.startDate.Format(DATE_FORMAT))
+		fmt.Println("End date: (inclusive)", bill.endDate.Format(DATE_FORMAT))
+		fmt.Println("# of days:", bill.tennantDays)
+		fmt.Printf("percent of bill: %.2f%% \n", bill.tennantShare*100)
+		fmt.Printf("Amount Due: $%.2f \n", bill.amountDue)
+		fmt.Println()
+	}
 
 }
